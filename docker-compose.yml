@@ -1,0 +1,29 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    image: invent-backend
+    container_name: invent-backend
+    environment:
+      - DATABASE_URL=sqlite:////data/app.db
+      - UPLOAD_DIR=/data/uploads
+      - TEMPLATE_DIR=/app/templates
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me}
+    volumes:
+      - backend_data:/data
+    expose:
+      - "5000"
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    image: invent-web
+    container_name: invent-web
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_data:

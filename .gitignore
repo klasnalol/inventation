@@ -1,0 +1,38 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+.Python
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# SQLite database and uploads
+/backend/app.db
+/backend/uploads/
+/backend/.venv/
+
+# Node / Vite build outputs
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+
+# Logs and runtime files
+*.log
+*.pid
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Docker
+*.tar
+.env
+.env.*
