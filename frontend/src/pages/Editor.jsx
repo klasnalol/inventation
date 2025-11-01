@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../api'
 import CanvasEditor, { FABRIC_EXPORT_PROPS } from '../components/CanvasEditor'
+import GuestList from '../components/GuestList'
 
 const TAB_INVITE = 'invite'
 const TAB_RSVP = 'rsvp'
@@ -13,6 +14,9 @@ export default function Editor(){
   const [responses, setResponses] = useState([])
   const [responsesLoading, setResponsesLoading] = useState(false)
   const [responsesError, setResponsesError] = useState(null)
+  const [guests, setGuests] = useState([])
+  const [guestsLoading, setGuestsLoading] = useState(false)
+  const [guestsError, setGuestsError] = useState(null)
   const [copyStatus, setCopyStatus] = useState(null)
   const [activeTab, setActiveTab] = useState(TAB_INVITE)
 
@@ -27,6 +31,12 @@ export default function Editor(){
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (!design?.id) {
+      setGuests([])
+    }
+  }, [design?.id])
 
   const serializeCanvas = useCallback((canvas) => {
     if (!canvas) return null
@@ -49,6 +59,20 @@ export default function Editor(){
       setResponsesError('Unable to load responses right now.')
     } finally {
       setResponsesLoading(false)
+    }
+  }, [])
+
+  const fetchGuests = useCallback(async (designId) => {
+    if (!designId) return
+    setGuestsLoading(true)
+    setGuestsError(null)
+    try {
+      const { data } = await api.get(`/designs/${designId}/guests`)
+      setGuests(data)
+    } catch (err) {
+      setGuestsError('Unable to load guests right now.')
+    } finally {
+      setGuestsLoading(false)
     }
   }, [])
 
@@ -106,8 +130,11 @@ export default function Editor(){
       })
     }
     await refreshDesignList()
-    if (designId) fetchResponses(designId)
-  }, [design, fetchResponses, refreshDesignList, serializeCanvas, template])
+    if (designId) {
+      fetchResponses(designId)
+      fetchGuests(designId)
+    }
+  }, [design, fetchGuests, fetchResponses, refreshDesignList, serializeCanvas, template])
 
   const handleRsvpSave = useCallback(async (payload) => {
     if (!template) return
@@ -150,15 +177,37 @@ export default function Editor(){
       })
     }
     await refreshDesignList()
-    if (designId) fetchResponses(designId)
-  }, [design, fetchResponses, refreshDesignList, serializeCanvas, template])
+    if (designId) {
+      fetchResponses(designId)
+      fetchGuests(designId)
+    }
+  }, [design, fetchGuests, fetchResponses, refreshDesignList, serializeCanvas, template])
 
   const loadDesign = useCallback(async (id) => {
     const { data } = await api.get(`/designs/${id}`)
     setDesign(data)
     await ensureTemplateLoaded(data.template_id)
     fetchResponses(id)
-  }, [ensureTemplateLoaded, fetchResponses])
+    fetchGuests(id)
+  }, [ensureTemplateLoaded, fetchGuests, fetchResponses])
+
+  const handleGuestCreate = useCallback(async (payload) => {
+    if (!design?.id) throw new Error('Save your design before adding guests.')
+    const { data } = await api.post(`/designs/${design.id}/guests`, payload)
+    setGuests((prev) => [...prev, data])
+    return data
+  }, [design?.id])
+
+  const handleGuestUpdate = useCallback(async (guestId, updates) => {
+    const { data } = await api.patch(`/guests/${guestId}`, updates)
+    setGuests((prev) => prev.map((guest) => (guest.id === guestId ? data : guest)))
+    return data
+  }, [])
+
+  const handleGuestDelete = useCallback(async (guestId) => {
+    await api.delete(`/guests/${guestId}`)
+    setGuests((prev) => prev.filter((guest) => guest.id !== guestId))
+  }, [])
 
   useEffect(() => {
     if (design?.id) {
@@ -295,6 +344,18 @@ export default function Editor(){
               Refresh responses
             </button>
           </div>
+        )}
+        {design?.id && (
+          <GuestList
+            designId={design.id}
+            guests={guests}
+            loading={guestsLoading}
+            error={guestsError}
+            onRefresh={() => fetchGuests(design.id)}
+            onCreate={handleGuestCreate}
+            onUpdate={handleGuestUpdate}
+            onDelete={handleGuestDelete}
+          />
         )}
       </aside>
     </div>

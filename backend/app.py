@@ -9,7 +9,7 @@ from pathlib import Path
 import os, json
 
 from config import Config
-from models import Base, User, Template, Design, InvitationResponse
+from models import Base, User, Template, Design, InvitationResponse, Guest
 
 app = Flask(__name__, static_folder=None)
 app.config.from_object(Config)
@@ -224,6 +224,106 @@ def list_responses(design_id: int):
             }
             for r in rows
         ])
+
+
+def serialize_guest(guest: Guest) -> dict:
+    return {
+        "id": guest.id,
+        "design_id": guest.design_id,
+        "name": guest.name,
+        "contact": guest.contact,
+        "comment": guest.comment,
+        "is_confirmed": bool(guest.is_confirmed),
+        "created_at": guest.created_at.isoformat(),
+        "updated_at": guest.updated_at.isoformat(),
+    }
+
+
+@app.get('/api/designs/<int:design_id>/guests')
+@jwt_required()
+def list_guests(design_id: int):
+    with Session(engine) as s:
+        design = s.get(Design, design_id)
+        if not design or design.user_id != int(get_jwt_identity()):
+            return jsonify({"error": "Not found"}), 404
+        rows = s.scalars(
+            select(Guest)
+            .where(Guest.design_id == design_id)
+            .order_by(Guest.created_at.asc())
+        ).all()
+        return jsonify([serialize_guest(g) for g in rows])
+
+
+@app.post('/api/designs/<int:design_id>/guests')
+@jwt_required()
+def create_guest(design_id: int):
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({"error": "Guest name is required"}), 400
+    contact = (data.get('contact') or '').strip() or None
+    comment = (data.get('comment') or '').strip() or None
+    is_confirmed = bool(data.get('is_confirmed'))
+
+    with Session(engine) as s:
+        design = s.get(Design, design_id)
+        if not design or design.user_id != int(get_jwt_identity()):
+            return jsonify({"error": "Not found"}), 404
+        guest = Guest(
+            design_id=design_id,
+            name=name,
+            contact=contact,
+            comment=comment,
+            is_confirmed=is_confirmed,
+        )
+        s.add(guest)
+        s.commit()
+        s.refresh(guest)
+        return jsonify(serialize_guest(guest)), 201
+
+
+@app.patch('/api/guests/<int:guest_id>')
+@jwt_required()
+def update_guest(guest_id: int):
+    data = request.get_json() or {}
+    with Session(engine) as s:
+        guest = s.get(Guest, guest_id)
+        if not guest:
+            return jsonify({"error": "Not found"}), 404
+        design = s.get(Design, guest.design_id)
+        if not design or design.user_id != int(get_jwt_identity()):
+            return jsonify({"error": "Not found"}), 404
+
+        if 'name' in data:
+            name = (data.get('name') or '').strip()
+            if not name:
+                return jsonify({"error": "Guest name is required"}), 400
+            guest.name = name
+        if 'contact' in data:
+            guest.contact = (data.get('contact') or '').strip() or None
+        if 'comment' in data:
+            guest.comment = (data.get('comment') or '').strip() or None
+        if 'is_confirmed' in data:
+            guest.is_confirmed = bool(data.get('is_confirmed'))
+
+        s.commit()
+        s.refresh(guest)
+        return jsonify(serialize_guest(guest))
+
+
+@app.delete('/api/guests/<int:guest_id>')
+@jwt_required()
+def delete_guest(guest_id: int):
+    with Session(engine) as s:
+        guest = s.get(Guest, guest_id)
+        if not guest:
+            return jsonify({"error": "Not found"}), 404
+        design = s.get(Design, guest.design_id)
+        if not design or design.user_id != int(get_jwt_identity()):
+            return jsonify({"error": "Not found"}), 404
+        s.delete(guest)
+        s.commit()
+        return jsonify({"ok": True})
 
 
 @app.post('/api/rsvp/<int:design_id>')

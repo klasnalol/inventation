@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import String, Integer, DateTime, Text, ForeignKey
+from sqlalchemy import String, Integer, DateTime, Text, ForeignKey, Boolean
 
 class Base(DeclarativeBase):
     pass
@@ -37,6 +37,9 @@ class Design(Base):
     responses: Mapped[list["InvitationResponse"]] = relationship(
         back_populates="design", cascade="all, delete-orphan"
     )
+    guests: Mapped[list["Guest"]] = relationship(
+        back_populates="design", cascade="all, delete-orphan"
+    )
 
 
 class InvitationResponse(Base):
@@ -49,3 +52,17 @@ class InvitationResponse(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     design: Mapped[Design] = relationship(back_populates="responses")
+
+
+class Guest(Base):
+    __tablename__ = "guests"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    design_id: Mapped[int] = mapped_column(ForeignKey("designs.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    contact: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    design: Mapped[Design] = relationship(back_populates="guests")

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { fabric } from 'fabric'
 import api from '../api'
+import 'gifler/gifler.min.js'
+import GifPickerModal from './GifPickerModal'
 
 export const FABRIC_EXPORT_PROPS = [
   'selectable',
@@ -9,6 +11,7 @@ export const FABRIC_EXPORT_PROPS = [
   'layerName',
   'layerType',
   'backgroundTag',
+  'gifSource',
 ]
 
 function resolveImageSrc(img) {
@@ -69,16 +72,8 @@ export default function CanvasEditor({
   const [background, setBackground] = useState(DEFAULT_BG)
   const [hasCustomBackground, setHasCustomBackground] = useState(false)
   const [error, setError] = useState(null)
-
-  useEffect(() => {
-    const c = new fabric.Canvas(canvasRef.current, { preserveObjectStacking: true })
-    setCanvas(c)
-    if (onCanvasReady) onCanvasReady(c)
-    return () => {
-      if (onCanvasReady) onCanvasReady(null)
-      c.dispose()
-    }
-  }, [onCanvasReady])
+  const [showGifPicker, setShowGifPicker] = useState(false)
+  const gifAnimationsRef = useRef(new Map())
 
   const ensureMetadata = useCallback((obj) => {
     if (!obj) return
@@ -92,6 +87,118 @@ export default function CanvasEditor({
       obj.set('layerName', obj.layerType === 'text' ? 'Text Layer' : 'Image Layer')
     }
   }, [])
+
+  const stopGifAnimation = useCallback((layerId) => {
+    if (!layerId) return
+    const record = gifAnimationsRef.current.get(layerId)
+    if (record?.animation?.stop) {
+      record.animation.stop()
+    }
+    if (record?.xhr?.abort) {
+      try {
+        record.xhr.abort()
+      } catch (err) {
+        console.warn('Failed to abort GIF request', err)
+      }
+    }
+    gifAnimationsRef.current.delete(layerId)
+  }, [])
+
+  const clearGifAnimations = useCallback(() => {
+    gifAnimationsRef.current.forEach((record) => {
+      if (record?.animation?.stop) record.animation.stop()
+    })
+    gifAnimationsRef.current.clear()
+  }, [])
+
+  const startGifAnimation = useCallback((target, source) => {
+    if (!canvas || !target || !source || !isCanvasReady(canvas)) return
+    const giflerFn = typeof window !== 'undefined' ? window.gifler : null
+    if (typeof giflerFn !== 'function') {
+      console.warn('GIF playback library not available')
+      return
+    }
+    const layerId = target.layerId || target.get?.('layerId')
+    if (!layerId) return
+
+    stopGifAnimation(layerId)
+
+    const gifCanvas = document.createElement('canvas')
+    const ctx = gifCanvas.getContext('2d')
+    if (!ctx) return
+
+    const initialWidth = target.width || target._element?.width || 1
+    const initialHeight = target.height || target._element?.height || 1
+
+    gifCanvas.width = initialWidth
+    gifCanvas.height = initialHeight
+
+    const scaleX = target.scaleX || 1
+    const scaleY = target.scaleY || 1
+
+    target.set({
+      gifSource: source,
+      layerType: 'gif',
+    })
+    target.setElement(gifCanvas)
+    target._setWidthHeight()
+    target.scaleX = scaleX
+    target.scaleY = scaleY
+    target.setCoords()
+    canvas.requestRenderAll()
+
+    const giflerInstance = giflerFn(source)
+    gifAnimationsRef.current.set(layerId, { xhr: giflerInstance.xhr, canvas: gifCanvas })
+    if (giflerInstance.xhr) {
+      const handleFailure = () => {
+        gifAnimationsRef.current.delete(layerId)
+      }
+      giflerInstance.xhr.addEventListener('error', handleFailure, { once: true })
+      giflerInstance.xhr.addEventListener('abort', handleFailure, { once: true })
+    }
+
+    giflerInstance.get((animator) => {
+      animator.onDrawFrame = (frameCtx, frame) => {
+        if (!frameCtx || !frame) return
+        if (gifCanvas.width !== frame.width || gifCanvas.height !== frame.height) {
+          gifCanvas.width = frame.width
+          gifCanvas.height = frame.height
+          target._setWidthHeight()
+          target.scaleX = scaleX
+          target.scaleY = scaleY
+          target.setCoords()
+        }
+        frameCtx.clearRect(0, 0, gifCanvas.width, gifCanvas.height)
+        frameCtx.drawImage(frame.buffer, frame.x, frame.y)
+        target.dirty = true
+        fabric.util.requestAnimFrame(() => {
+          if (canvas && isCanvasReady(canvas)) {
+            canvas.requestRenderAll()
+          }
+        })
+      }
+      const runner = animator.animateInCanvas(gifCanvas, true)
+      gifAnimationsRef.current.set(layerId, {
+        animation: runner,
+        canvas: gifCanvas,
+        xhr: giflerInstance.xhr,
+      })
+      return runner
+    })
+  }, [canvas, stopGifAnimation])
+
+  useEffect(() => {
+    const c = new fabric.Canvas(canvasRef.current, { preserveObjectStacking: true })
+    setCanvas(c)
+    if (onCanvasReady) onCanvasReady(c)
+    return () => {
+      clearGifAnimations()
+      if (onCanvasReady) onCanvasReady(null)
+      c.dispose()
+    }
+  }, [clearGifAnimations, onCanvasReady])
+
+  useEffect(() => () => clearGifAnimations(), [clearGifAnimations])
 
   const refreshLayers = useCallback(() => {
     if (!canvas) return
@@ -117,10 +224,16 @@ export default function CanvasEditor({
     const handleAdd = (e) => {
       if (!e.target || e.target === canvas.backgroundImage) return
       ensureMetadata(e.target)
+      if (e.target.layerType === 'gif' && e.target.gifSource) {
+        startGifAnimation(e.target, e.target.gifSource)
+      }
       refreshLayers()
     }
     const handleRemove = (e) => {
       if (!e.target || e.target === canvas.backgroundImage) return
+       if (e.target.layerType === 'gif') {
+        stopGifAnimation(e.target.layerId)
+      }
       refreshLayers()
     }
     const handleUpdate = () => refreshLayers()
@@ -140,7 +253,7 @@ export default function CanvasEditor({
       canvas.off('selection:updated', handleUpdate)
       canvas.off('selection:cleared', handleUpdate)
     }
-  }, [canvas, ensureMetadata, refreshLayers])
+  }, [canvas, ensureMetadata, refreshLayers, startGifAnimation, stopGifAnimation])
 
   const addOverlayImageToCanvas = useCallback((img) => {
     if (!canvas || !img || !isCanvasReady(canvas)) return
@@ -162,6 +275,7 @@ export default function CanvasEditor({
     canvas.add(img)
     canvas.setActiveObject(img)
     canvas.renderAll()
+    return img
   }, [canvas, ensureMetadata])
 
   const applyBackgroundFromSource = useCallback(
@@ -210,6 +324,7 @@ export default function CanvasEditor({
   useEffect(() => {
     if (!canvas || !template || !isCanvasReady(canvas)) return
 
+    clearGifAnimations()
     canvas.clear()
     setError(null)
 
@@ -250,6 +365,11 @@ export default function CanvasEditor({
           } else {
             setHasCustomBackground(false)
           }
+          instance.getObjects().forEach((obj) => {
+            if (obj.layerType === 'gif' && obj.gifSource) {
+              startGifAnimation(obj, obj.gifSource)
+            }
+          })
           refreshLayers()
         })
       } else {
@@ -272,7 +392,16 @@ export default function CanvasEditor({
     }
 
     bootstrap()
-  }, [canvas, template, design, ensureMetadata, refreshLayers, applyBackgroundFromSource])
+  }, [
+    applyBackgroundFromSource,
+    canvas,
+    clearGifAnimations,
+    design,
+    ensureMetadata,
+    refreshLayers,
+    startGifAnimation,
+    template,
+  ])
 
   const findLayerObject = useCallback(
     (layerId) => {
@@ -365,6 +494,65 @@ export default function CanvasEditor({
     }
   }
 
+  const handleGifSelect = useCallback(
+    async (gif) => {
+      if (!gif?.url || !canvas || !isCanvasReady(canvas)) return
+      setBusy(true)
+      try {
+        const previewCandidates = [gif.preview, gif.url].filter(Boolean)
+        let img = null
+        let lastErr = null
+        for (const src of previewCandidates) {
+          try {
+            img = await loadFabricImage(src, { crossOrigin: 'anonymous' })
+            break
+          } catch (err) {
+            lastErr = err
+          }
+        }
+        if (!img) {
+          for (const remoteSrc of previewCandidates) {
+            try {
+              const resp = await fetch(remoteSrc, { mode: 'cors' })
+              if (!resp.ok) continue
+              const blob = await resp.blob()
+              const localUrl = URL.createObjectURL(blob)
+              img = await loadFabricImage(localUrl)
+              if (img) img.gifObjectUrl = localUrl
+              break
+            } catch (err) {
+              lastErr = err
+            }
+          }
+        }
+        if (!img) {
+          throw lastErr || new Error('Unable to load GIF preview')
+        }
+        img.set({
+          layerType: 'gif',
+          layerName: 'GIF Layer',
+          gifSource: gif.url,
+        })
+        const added = addOverlayImageToCanvas(img)
+        if (added) {
+          startGifAnimation(added, gif.url)
+          if (added.gifObjectUrl) {
+            URL.revokeObjectURL(added.gifObjectUrl)
+            delete added.gifObjectUrl
+          }
+        }
+        setError(null)
+        setShowGifPicker(false)
+      } catch (err) {
+        console.error(err)
+        setError('Unable to add that GIF. Please try another one.')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [addOverlayImageToCanvas, canvas, startGifAnimation]
+  )
+
   function resetBackgroundImage() {
     if (!canvas || !template?.image_url || !isCanvasReady(canvas)) return
     setBusy(true)
@@ -453,6 +641,9 @@ export default function CanvasEditor({
             <span>Add Photo</span>
             <input type="file" accept="image/*" onChange={uploadImage} disabled={busy} />
           </label>
+          <button className="ghost" type="button" onClick={() => setShowGifPicker(true)} disabled={busy}>
+            Add GIF
+          </button>
           <label className={`ghost file-input ${busy ? 'disabled' : ''}`}>
             <span>Background Photo</span>
             <input type="file" accept="image/*" onChange={uploadBackgroundImage} disabled={busy} />
@@ -486,7 +677,9 @@ export default function CanvasEditor({
             {layers.map((layer) => (
               <li key={layer.id} className={layer.id === activeLayer ? 'active' : ''}>
                 <button className="layer-select" onClick={() => selectLayer(layer.id)}>
-                  <span className="layer-type">{layer.type === 'text' ? 'Text' : 'Image'}</span>
+                  <span className="layer-type">
+                    {layer.type === 'text' ? 'Text' : layer.type === 'gif' ? 'GIF' : 'Image'}
+                  </span>
                   <input
                     value={layer.name}
                     onChange={(e) => renameLayer(layer.id, e.target.value)}
@@ -507,6 +700,11 @@ export default function CanvasEditor({
           </ul>
         </aside>
       </div>
+      <GifPickerModal
+        isOpen={showGifPicker}
+        onClose={() => setShowGifPicker(false)}
+        onSelect={handleGifSelect}
+      />
     </div>
   )
 }
