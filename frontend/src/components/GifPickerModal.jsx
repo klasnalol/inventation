@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useI18n } from '../i18n'
 
 const TENOR_API_KEY = 'LIVDSRZULELA'
 const TENOR_BASE_URL = 'https://g.tenor.com/v1'
@@ -38,6 +39,7 @@ export default function GifPickerModal({ isOpen, onClose, onSelect }) {
   const [error, setError] = useState(null)
 
   const abortRef = useRef(null)
+  const { t } = useI18n()
 
   const hasResults = useMemo(() => results.length > 0, [results])
 
@@ -99,7 +101,7 @@ export default function GifPickerModal({ isOpen, onClose, onSelect }) {
     } catch (err) {
       if (err.name === 'AbortError') return
       console.error(err)
-      setError('Unable to load GIFs. Please try again.')
+      setError(t('Unable to load GIFs. Please try again.'))
     } finally {
       setLoading(false)
     }
@@ -125,9 +127,9 @@ export default function GifPickerModal({ isOpen, onClose, onSelect }) {
         onClick={(event) => event.stopPropagation()}
       >
         <div className="gif-modal-header">
-          <h3>Select a GIF</h3>
+          <h3>{t('Select a GIF')}</h3>
           <button type="button" className="ghost" onClick={onClose}>
-            Close
+            {t('Close')}
           </button>
         </div>
         <form className="gif-search" onSubmit={handleSubmit}>
@@ -135,18 +137,18 @@ export default function GifPickerModal({ isOpen, onClose, onSelect }) {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search celebration GIFs"
+            placeholder={t('Search celebration GIFs')}
             autoFocus
           />
           <button type="submit" className="primary" disabled={loading}>
-            Search
+            {t('Search')}
           </button>
         </form>
         {error && <p className="error small">{error}</p>}
         <div className="gif-results">
-          {loading && <p className="muted">Loading GIFs…</p>}
+          {loading && <p className="muted">{t('Loading GIFs...')}</p>}
           {!loading && !hasResults && (
-            <p className="muted">No results. Try a different search term.</p>
+            <p className="muted">{t('No results. Try a different search term.')}</p>
           )}
           <div className="gif-grid">
             {results.map((item) => (
@@ -155,9 +157,9 @@ export default function GifPickerModal({ isOpen, onClose, onSelect }) {
                 type="button"
                 className="gif-thumb"
                 onClick={() => handleSelect(item)}
-                title={item.description || 'Insert GIF'}
+                title={item.description || t('Insert GIF')}
               >
-                <img src={item.preview} alt={item.description || 'GIF option'} loading="lazy" />
+                <img src={item.preview} alt={item.description || t('GIF option')} loading="lazy" />
               </button>
             ))}
           </div>

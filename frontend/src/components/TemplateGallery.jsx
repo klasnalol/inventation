@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react'
 import api from '../api'
 import TemplateCard from './TemplateCard'
 import { useNavigate } from 'react-router-dom'
+import { useI18n } from '../i18n'
 
 export default function TemplateGallery({ user }){
   const [templates, setTemplates] = useState([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [errorKey, setErrorKey] = useState('')
   const navigate = useNavigate()
+  const { t } = useI18n()
 
   useEffect(()=>{
     let cancelled = false
@@ -16,12 +18,12 @@ export default function TemplateGallery({ user }){
       .then(r => {
         if (!cancelled){
           setTemplates(r.data)
-          setError('')
+          setErrorKey('')
         }
       })
       .catch(()=>{
         if (!cancelled){
-          setError('We could not load templates right now. Please try again shortly.')
+          setErrorKey('We could not load templates right now. Please try again shortly.')
         }
       })
       .finally(()=>!cancelled && setLoading(false))
@@ -30,36 +32,38 @@ export default function TemplateGallery({ user }){
     }
   }, [])
 
-  function pick(t){
-    localStorage.setItem('currentTemplate', JSON.stringify(t))
+  function pick(templateData){
+    localStorage.setItem('currentTemplate', JSON.stringify(templateData))
     navigate('/editor')
   }
 
   return (
     <section className="template-gallery">
       <div className="section-heading">
-        <h1>Design an unforgettable invitation</h1>
-        <p>Create polished invites in minutes. Choose a template, customize it, and share it instantly.</p>
+        <h1>{t('Design invitations that set the tone')}</h1>
+        <p>{t('Explore editorial-style templates curated with vibrant photography. Personalize every detail and share a stunning invite in minutes.')}</p>
       </div>
 
       {loading && (
-        <div className="loading-state" role="status">Loading templates…</div>
+        <div className="loading-state" role="status">{t('Loading templates...')}</div>
       )}
-      {error && (
-        <div className="error-state" role="alert">{error}</div>
+      {errorKey && (
+        <div className="error-state" role="alert">{t(errorKey)}</div>
       )}
 
       <div className="template-grid">
-        {templates.map(t => <TemplateCard key={t.id} t={t} onPick={pick} />)}
+        {templates.map((tpl) => (
+          <TemplateCard key={tpl.id} template={tpl} onPick={pick} />
+        ))}
       </div>
 
-      {!loading && !templates.length && !error && (
-        <p className="empty-state">No templates are available just yet—check back soon!</p>
+      {!loading && !templates.length && !errorKey && (
+        <p className="empty-state">{t('No templates are available just yet - check back soon!')}</p>
       )}
 
       {!user && (
         <p className="login-tip">
-          <strong>Tip:</strong> Log in to upload photos and save every version of your design.
+          <strong>{t('Tip:')}</strong> {t('Log in to upload photos and save every version of your design.')}
         </p>
       )}
     </section>

@@ -2,10 +2,11 @@ from __future__ import annotations
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, select, text, func
+from sqlalchemy.orm import Session, selectinload
 from werkzeug.security import generate_password_hash, check_password_hash
 from pathlib import Path
+from datetime import datetime, timedelta
 import os, json
 
 from config import Config
@@ -35,6 +36,7 @@ def ensure_sqlite_column(table: str, column: str, ddl: str) -> None:
 
 ensure_sqlite_column("designs", "rsvp_fabric_json", "TEXT")
 ensure_sqlite_column("invitation_responses", "message", "TEXT")
+ensure_sqlite_column("templates", "category", "TEXT")
 
 def dump_fabric(data):
     return json.dumps(data) if data is not None else None
@@ -46,26 +48,95 @@ def load_fabric(raw):
 def seed_templates():
     samples = [
         {
-            "name": "Floral A6",
-            "thumbnail_url": "/static/templates/floral-thumb.png",
-            "image_url": "/static/templates/floral.png",
+            "name": "Modern Romance",
+            "category": "Floral Chic",
+            "thumbnail_url": "/static/templates/modern-romance-thumb.jpg",
+            "image_url": "/static/templates/modern-romance.jpg",
+            "width": 1200,
+            "height": 800,
+        },
+        {
+            "name": "Urban Sky",
+            "category": "Modern Minimal",
+            "thumbnail_url": "/static/templates/urban-sky-thumb.jpg",
+            "image_url": "/static/templates/urban-sky.jpg",
+            "width": 1200,
+            "height": 800,
+        },
+        {
+            "name": "Pastel Dream",
+            "category": "Soft Celebration",
+            "thumbnail_url": "/static/templates/pastel-dream-thumb.jpg",
+            "image_url": "/static/templates/pastel-dream.jpg",
+            "width": 1200,
+            "height": 800,
+        },
+        {
+            "name": "Rustic Charm",
+            "category": "Boho Gathering",
+            "thumbnail_url": "/static/templates/rustic-charm-thumb.jpg",
+            "image_url": "/static/templates/rustic-charm.jpg",
+            "width": 1200,
+            "height": 1500,
+        },
+        {
+            "name": "Midnight Glam",
+            "category": "Evening Affair",
+            "thumbnail_url": "/static/templates/midnight-glam-thumb.jpg",
+            "image_url": "/static/templates/midnight-glam.jpg",
             "width": 1200,
             "height": 1800,
         },
         {
-            "name": "Minimal Dark",
-            "thumbnail_url": "/static/templates/minimal-thumb.png",
-            "image_url": "/static/templates/minimal.png",
-            "width": 1600,
-            "height": 900,
+            "name": "Neon Night",
+            "category": "Bold Celebration",
+            "thumbnail_url": "/static/templates/neon-night-thumb.jpg",
+            "image_url": "/static/templates/neon-night.jpg",
+            "width": 1200,
+            "height": 1800,
+        },
+        {
+            "name": "Kazakh Sky",
+            "category": "Kazakh Heritage",
+            "thumbnail_url": "/static/templates/kazakh-sky-thumb.png",
+            "image_url": "/static/templates/kazakh-sky.png",
+            "width": 1200,
+            "height": 1800,
+        },
+        {
+            "name": "Yurt Evening",
+            "category": "Kazakh Heritage",
+            "thumbnail_url": "/static/templates/yurt-evening-thumb.png",
+            "image_url": "/static/templates/yurt-evening.png",
+            "width": 1200,
+            "height": 1800,
+        },
+        {
+            "name": "Steppe Sunrise",
+            "category": "Kazakh Heritage",
+            "thumbnail_url": "/static/templates/steppe-sunrise-thumb.png",
+            "image_url": "/static/templates/steppe-sunrise.png",
+            "width": 1200,
+            "height": 1800,
         },
     ]
     with Session(engine) as s:
-        existing = s.scalar(select(Template.id))
-        if existing:
-            return
-        for t in samples:
-            s.add(Template(**t))
+        existing_templates = {
+            tpl.name: tpl
+            for tpl in s.scalars(select(Template)).all()
+        }
+        legacy_names = {"Floral A6", "Minimal Dark"}
+        for legacy in legacy_names:
+            if legacy in existing_templates:
+                s.delete(existing_templates[legacy])
+                existing_templates.pop(legacy, None)
+        for data in samples:
+            current = existing_templates.get(data["name"])
+            if current:
+                for key, value in data.items():
+                    setattr(current, key, value)
+            else:
+                s.add(Template(**data))
         s.commit()
 
 
@@ -121,6 +192,7 @@ def list_templates():
             "image_url": r.image_url,
             "width": r.width,
             "height": r.height,
+            "category": r.category,
         } for r in rows])
 
 # --- Image upload (for user photo overlays) ---
@@ -324,6 +396,115 @@ def delete_guest(guest_id: int):
         s.delete(guest)
         s.commit()
         return jsonify({"ok": True})
+
+
+# --- Analytics ---
+@app.get('/api/analytics/summary')
+@jwt_required()
+def analytics_summary():
+    user_id = int(get_jwt_identity())
+    cutoff = datetime.utcnow() - timedelta(days=30)
+    with Session(engine) as s:
+        template_lookup = {
+            tpl.id: {"name": tpl.name, "category": tpl.category}
+            for tpl in s.scalars(select(Template)).all()
+        }
+        designs = s.scalars(
+            select(Design)
+            .where(Design.user_id == user_id)
+            .options(
+                selectinload(Design.responses),
+                selectinload(Design.guests),
+            )
+            .order_by(Design.created_at.desc())
+        ).all()
+
+        total_responses = 0
+        total_guests = 0
+        confirmed_guests = 0
+        design_summaries = []
+        for design in designs:
+            responses_count = len(design.responses or [])
+            guests_count = len(design.guests or [])
+            confirmed_count = sum(1 for guest in (design.guests or []) if guest.is_confirmed)
+            total_responses += responses_count
+            total_guests += guests_count
+            confirmed_guests += confirmed_count
+            template_info = template_lookup.get(design.template_id, {})
+            design_summaries.append(
+                {
+                    "id": design.id,
+                    "title": design.title,
+                    "template": {
+                        "id": design.template_id,
+                        "name": template_info.get("name"),
+                        "category": template_info.get("category"),
+                    },
+                    "created_at": design.created_at.isoformat(),
+                    "updated_at": design.updated_at.isoformat(),
+                    "responses": responses_count,
+                    "guests": guests_count,
+                    "confirmed_guests": confirmed_count,
+                    "rsvp_completion_rate": responses_count / guests_count if guests_count else 0,
+                    "guest_confirmation_rate": confirmed_count / guests_count if guests_count else 0,
+                }
+            )
+
+        totals = {
+            "designs": len(designs),
+            "responses": total_responses,
+            "guests": total_guests,
+            "confirmed_guests": confirmed_guests,
+            "average_rsvp_rate": total_responses / total_guests if total_guests else 0,
+        }
+
+        recent_responses = [
+            {
+                "id": resp.id,
+                "design_id": resp.design_id,
+                "design_title": design_title,
+                "name": resp.name,
+                "phone": resp.phone,
+                "message": resp.message,
+                "created_at": resp.created_at.isoformat(),
+            }
+            for resp, design_title in s.execute(
+                select(InvitationResponse, Design.title)
+                .join(Design, InvitationResponse.design_id == Design.id)
+                .where(Design.user_id == user_id)
+                .order_by(InvitationResponse.created_at.desc())
+                .limit(10)
+            )
+        ]
+
+        daily_rows = s.execute(
+            select(
+                func.date(InvitationResponse.created_at).label("day"),
+                func.count(InvitationResponse.id).label("count"),
+            )
+            .join(Design, InvitationResponse.design_id == Design.id)
+            .where(
+                Design.user_id == user_id,
+                InvitationResponse.created_at >= cutoff,
+            )
+            .group_by("day")
+            .order_by("day")
+        ).all()
+
+        daily_responses = [
+            {"date": row.day if isinstance(row.day, str) else row.day.isoformat(), "count": row.count}
+            for row in daily_rows
+        ]
+
+        return jsonify(
+            {
+                "totals": totals,
+                "designs": design_summaries,
+                "recent_responses": recent_responses,
+                "daily_responses": daily_responses,
+                "window_start": cutoff.date().isoformat(),
+            }
+        )
 
 
 @app.post('/api/rsvp/<int:design_id>')

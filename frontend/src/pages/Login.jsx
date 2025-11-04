@@ -53,7 +53,7 @@ export default function Login({ onAuth }){
         </label>
         {error && <div className="form-error" role="alert">{error}</div>}
         <button className="primary" type="submit" disabled={busy}>
-          {busy ? 'Please wait…' : mode === 'login' ? 'Login' : 'Create account'}
+          {busy ? 'Please wait...' : mode === 'login' ? 'Login' : 'Create account'}
         </button>
         <button
           className="ghost"

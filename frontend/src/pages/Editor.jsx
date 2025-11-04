@@ -1,12 +1,47 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api from '../api'
 import CanvasEditor, { FABRIC_EXPORT_PROPS } from '../components/CanvasEditor'
 import GuestList from '../components/GuestList'
+import { useI18n } from '../i18n'
 
 const TAB_INVITE = 'invite'
 const TAB_RSVP = 'rsvp'
 
+const SIZE_TOLERANCE = 4
+const SIZE_VARIANTS = [
+  { id: 'a6-portrait', name: 'A6 Portrait', width: 1200, height: 1800 },
+  { id: 'a6-landscape', name: 'A6 Landscape', width: 1800, height: 1200 },
+  { id: 'square', name: 'Square', width: 1600, height: 1600 },
+  { id: 'postcard-5x7', name: 'Postcard 5x7', width: 1500, height: 2100 },
+  { id: 'story-9x16', name: 'Story 9x16', width: 1080, height: 1920 },
+  { id: 'wide-16x9', name: 'Cinema 16x9', width: 1920, height: 1080 },
+]
+
+const matchSizePreset = (width, height) => {
+  if (!width || !height) return null
+  return (
+    SIZE_VARIANTS.find(
+      (preset) =>
+        Math.abs(preset.width - width) <= SIZE_TOLERANCE &&
+        Math.abs(preset.height - height) <= SIZE_TOLERANCE
+    ) || null
+  )
+}
+
+const formatSizeLabel = (name, width, height, translate) =>
+  `${translate(name, name)} - ${Math.round(width)} x ${Math.round(height)} px`
+
+const extractFabricSize = (fabric) => {
+  if (!fabric) return null
+  const meta = fabric.meta || {}
+  const width = meta.baseWidth || fabric.width || null
+  const height = meta.baseHeight || fabric.height || null
+  const sizeKey = meta.sizeKey || null
+  return { width, height, sizeKey }
+}
+
 export default function Editor(){
+  const { t } = useI18n()
   const [template, setTemplate] = useState(null)
   const [design, setDesign] = useState(null)
   const [designs, setDesigns] = useState([])
@@ -19,9 +54,100 @@ export default function Editor(){
   const [guestsError, setGuestsError] = useState(null)
   const [copyStatus, setCopyStatus] = useState(null)
   const [activeTab, setActiveTab] = useState(TAB_INVITE)
+  const [sizeKey, setSizeKey] = useState('template')
+  const [customSize, setCustomSize] = useState(null)
 
   const inviteCanvasRef = useRef(null)
   const rsvpCanvasRef = useRef(null)
+
+  const templateSize = useMemo(() => {
+    if (!template?.width || !template?.height) return null
+    return { width: template.width, height: template.height }
+  }, [template?.width, template?.height])
+
+  const sizeOptions = useMemo(() => {
+    const options = []
+    const addOption = (id, label, width, height, disabled = false) => {
+      const exists = options.some(
+        (opt) =>
+          Math.abs(opt.width - width) <= SIZE_TOLERANCE &&
+          Math.abs(opt.height - height) <= SIZE_TOLERANCE
+      )
+      if (!exists) {
+        options.push({ id, label, width, height, disabled })
+      }
+    }
+
+    if (templateSize) {
+      addOption(
+        'template',
+        formatSizeLabel('Template default', templateSize.width, templateSize.height, t),
+        templateSize.width,
+        templateSize.height
+      )
+    }
+
+    SIZE_VARIANTS.forEach((preset) => {
+      addOption(
+        preset.id,
+        formatSizeLabel(preset.name, preset.width, preset.height, t),
+        preset.width,
+        preset.height
+      )
+    })
+
+    if (customSize) {
+      const exists = options.some(
+        (opt) =>
+          Math.abs(opt.width - customSize.width) <= SIZE_TOLERANCE &&
+          Math.abs(opt.height - customSize.height) <= SIZE_TOLERANCE
+      )
+      if (!exists) {
+        options.push({
+          id: 'custom',
+          label: formatSizeLabel('Custom', customSize.width, customSize.height, t),
+          width: customSize.width,
+          height: customSize.height,
+          disabled: true,
+        })
+      }
+    }
+
+    return options
+  }, [templateSize, customSize])
+
+  const currentSize = useMemo(() => {
+    if (sizeKey === 'template' || !sizeKey) {
+      return templateSize || { width: 1200, height: 1800 }
+    }
+    if (sizeKey === 'custom' && customSize) {
+      return customSize
+    }
+    const preset = SIZE_VARIANTS.find((variant) => variant.id === sizeKey)
+    if (preset) {
+      return { width: preset.width, height: preset.height }
+    }
+    if (templateSize) return templateSize
+    if (customSize) return customSize
+    return { width: 1200, height: 1800 }
+  }, [sizeKey, templateSize, customSize])
+
+  const handleSizeChange = useCallback((value) => {
+    if (value === 'template') {
+      setSizeKey('template')
+      setCustomSize(null)
+      return
+    }
+    if (value === 'custom') {
+      if (customSize) setSizeKey('custom')
+      return
+    }
+    const preset = SIZE_VARIANTS.find((variant) => variant.id === value)
+    if (preset) {
+      setSizeKey(value)
+      setCustomSize(null)
+    }
+  }, [customSize])
 
   useEffect(() => {
     const storedTemplate = localStorage.getItem('currentTemplate')
@@ -38,15 +164,39 @@ export default function Editor(){
     }
   }, [design?.id])
 
+  useEffect(() => {
+    if (!templateSize) return
+    if (design?.fabric_json) return
+    const preset = matchSizePreset(templateSize.width, templateSize.height)
+    if (preset) {
+      setSizeKey(preset.id)
+      setCustomSize(null)
+    } else {
+      setSizeKey('template')
+      setCustomSize(null)
+    }
+  }, [templateSize?.width, templateSize?.height, design?.fabric_json])
+
   const serializeCanvas = useCallback((canvas) => {
     if (!canvas) return null
     try {
-      return canvas.toJSON(FABRIC_EXPORT_PROPS)
+      const json = canvas.toJSON(FABRIC_EXPORT_PROPS)
+      if (currentSize?.width && currentSize?.height) {
+        json.width = currentSize.width
+        json.height = currentSize.height
+        json.meta = {
+          ...(json.meta || {}),
+          baseWidth: currentSize.width,
+          baseHeight: currentSize.height,
+          sizeKey,
+        }
+      }
+      return json
     } catch (err) {
       console.error(err)
       return null
     }
-  }, [])
+  }, [currentSize?.width, currentSize?.height, sizeKey])
 
   const fetchResponses = useCallback(async (designId) => {
     if (!designId) return
@@ -217,6 +367,38 @@ export default function Editor(){
     }
   }, [design?.id, fetchResponses])
 
+  useEffect(() => {
+    if (!design?.fabric_json && !design?.rsvp_fabric_json) return
+    const primary = extractFabricSize(design?.fabric_json)
+    const backup = extractFabricSize(design?.rsvp_fabric_json)
+    const source = primary || backup
+    if (!source) return
+    const { width, height, sizeKey: savedKey } = source
+    if (savedKey) {
+      if (savedKey === 'custom' && width && height) {
+        setSizeKey('custom')
+        setCustomSize({ width, height })
+        return
+      }
+      const preset = SIZE_VARIANTS.find((variant) => variant.id === savedKey)
+      if (preset) {
+        setSizeKey(savedKey)
+        setCustomSize(null)
+        return
+      }
+    }
+    if (width && height) {
+      const preset = matchSizePreset(width, height)
+      if (preset) {
+        setSizeKey(preset.id)
+        setCustomSize(null)
+      } else {
+        setSizeKey('custom')
+        setCustomSize({ width, height })
+      }
+    }
+  }, [design?.id, design?.fabric_json, design?.rsvp_fabric_json])
+
   const copyInviteLink = useCallback(() => {
     if (!design?.id || typeof window === 'undefined') return
     const link = `${window.location.origin}/rsvp/${design.id}`
@@ -224,12 +406,12 @@ export default function Editor(){
       navigator.clipboard
         .writeText(link)
         .then(() => {
-          setCopyStatus('Copied!')
+          setCopyStatus(t('Copied!'))
           setTimeout(() => setCopyStatus(null), 2000)
         })
-        .catch(() => setCopyStatus('Copy failed'))
+        .catch(() => setCopyStatus(t('Copy failed')))
     } else {
-      setCopyStatus('Copy not supported')
+      setCopyStatus(t('Copy not supported'))
     }
   }, [design?.id])
 
@@ -242,8 +424,8 @@ export default function Editor(){
     return (
       <div className="editor-empty">
         <div className="card">
-          <h2>Select a template to get started</h2>
-          <p>Head back to the template gallery to choose a design. Your picks automatically appear here.</p>
+          <h2>{t('Select a template to get started')}</h2>
+          <p>{t('Head back to the template gallery to choose a design. Your picks automatically appear here.')}</p>
         </div>
       </div>
     )
@@ -262,14 +444,14 @@ export default function Editor(){
             className={activeTab === TAB_INVITE ? 'active' : ''}
             onClick={() => setActiveTab(TAB_INVITE)}
           >
-            Invitation design
+            {t('Invitation design')}
           </button>
           <button
             type="button"
             className={activeTab === TAB_RSVP ? 'active' : ''}
             onClick={() => setActiveTab(TAB_RSVP)}
           >
-            RSVP page
+            {t('RSVP page')}
           </button>
         </div>
         <div className={`canvas-pane ${activeTab === TAB_INVITE ? 'active' : 'hidden'}`}>
@@ -278,6 +460,11 @@ export default function Editor(){
             design={design}
             onSave={handleInviteSave}
             defaultTitleSuffix="My Invite"
+            sizeOptions={sizeOptions}
+            sizeKey={sizeKey}
+            sizeDimensions={currentSize}
+            onSizeChange={handleSizeChange}
+            allowSizeChange
             onCanvasReady={(canvas) => {
               inviteCanvasRef.current = canvas
             }}
@@ -290,6 +477,10 @@ export default function Editor(){
             onSave={handleRsvpSave}
             defaultText="Tell us if you can make it!"
             defaultTitleSuffix="RSVP Page"
+            sizeOptions={sizeOptions}
+            sizeKey={sizeKey}
+            sizeDimensions={currentSize}
+            allowSizeChange={false}
             onCanvasReady={(canvas) => {
               rsvpCanvasRef.current = canvas
             }}
@@ -298,8 +489,8 @@ export default function Editor(){
       </div>
       <aside className="editor-sidebar">
         <div className="card">
-          <h3>Your saved designs</h3>
-          {loading && <p className="muted">Loading designs...</p>}
+          <h3>{t('Your saved designs')}</h3>
+          {loading && <p className="muted">{t('Loading designs...')}</p>}
           <ul className="design-list">
             {designs.map((d) => (
               <li key={d.id}>
@@ -313,22 +504,22 @@ export default function Editor(){
               </li>
             ))}
           </ul>
-          {!loading && !designs.length && <p className="muted">You haven't saved any designs yet.</p>}
+          {!loading && !designs.length && <p className="muted">{t("You haven't saved any designs yet.")}</p>}
         </div>
         {design?.id && (
           <div className="card responses-card">
-            <h3>Guest responses</h3>
-            <p className="muted">Share the RSVP link so guests can leave their details.</p>
+            <h3>{t('Guest responses')}</h3>
+            <p className="muted">{t('Share the RSVP link so guests can leave their details.')}</p>
             <div className="invite-link">
               <code>{inviteLink}</code>
-              <button className="ghost" onClick={copyInviteLink}>Copy link</button>
+              <button className="ghost" onClick={copyInviteLink}>{t('Copy link')}</button>
             </div>
             {copyStatus && <p className="status small">{copyStatus}</p>}
             <div className="responses-list">
-              {responsesLoading && <p className="muted">Loading responses...</p>}
+              {responsesLoading && <p className="muted">{t('Loading responses...')}</p>}
               {responsesError && <p className="error">{responsesError}</p>}
               {!responsesLoading && !responsesError && !responses.length && (
-                <p className="muted">No one has responded yet.</p>
+                <p className="muted">{t('No one has responded yet.')}</p>
               )}
               <ul>
                 {responses.map((r) => (
@@ -341,7 +532,7 @@ export default function Editor(){
               </ul>
             </div>
             <button className="secondary" onClick={() => fetchResponses(design.id)} disabled={responsesLoading}>
-              Refresh responses
+              {t('Refresh responses')}
             </button>
           </div>
         )}

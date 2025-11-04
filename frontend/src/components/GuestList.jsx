@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import { useI18n } from '../i18n'
 
 function normalizeField(value) {
   const trimmed = (value || '').trim()
@@ -15,6 +16,7 @@ export default function GuestList({
   onUpdate,
   onDelete,
 }) {
+  const { t } = useI18n()
   const [formValues, setFormValues] = useState({
     name: '',
     contact: '',
@@ -36,7 +38,7 @@ export default function GuestList({
     setFormError(null)
     setActionError(null)
     if (!formValues.name.trim()) {
-      setFormError('Guest name is required.')
+      setFormError(t('Guest name is required.'))
       return
     }
     setSubmitting(true)
@@ -54,7 +56,7 @@ export default function GuestList({
         is_confirmed: false,
       })
     } catch (err) {
-      setFormError(err?.message || 'Unable to add guest right now.')
+      setFormError(err?.message || t('Unable to add guest right now.'))
     } finally {
       setSubmitting(false)
     }
@@ -80,7 +82,7 @@ export default function GuestList({
     e.preventDefault()
     if (!editingId) return
     if (!editValues.name.trim()) {
-      setActionError('Guest name cannot be empty.')
+      setActionError(t('Guest name cannot be empty.'))
       return
     }
     setEditSubmitting(true)
@@ -93,7 +95,7 @@ export default function GuestList({
       })
       cancelEdit()
     } catch (err) {
-      setActionError(err?.message || 'Unable to update guest.')
+      setActionError(err?.message || t('Unable to update guest.'))
     } finally {
       setEditSubmitting(false)
     }
@@ -104,26 +106,27 @@ export default function GuestList({
     try {
       await onUpdate(guest.id, { is_confirmed: !guest.is_confirmed })
     } catch (err) {
-      setActionError(err?.message || 'Unable to update guest status.')
+      setActionError(err?.message || t('Unable to update guest status.'))
     }
   }
 
   async function handleDelete(guest) {
-    if (!window.confirm(`Remove ${guest.name}?`)) return
+    const removePrompt = t('Remove guest prompt').replace('{name}', guest.name)
+    if (!window.confirm(removePrompt)) return
     setActionError(null)
     try {
       await onDelete(guest.id)
     } catch (err) {
-      setActionError(err?.message || 'Unable to delete guest.')
+      setActionError(err?.message || t('Unable to delete guest.'))
     }
   }
 
   return (
     <div className="card guest-card">
-      <h3>Guest list</h3>
-      <p className="muted small">Track invited guests and confirmations manually.</p>
+      <h3>{t('Guest list')}</h3>
+      <p className="muted small">{t('Track invited guests and confirmations manually.')}</p>
 
-      {!designId && <p className="error small">Save your design before adding guests.</p>}
+      {!designId && <p className="error small">{t('Save your design before adding guests.')}</p>}
       {error && <p className="error small">{error}</p>}
       {formError && <p className="error small">{formError}</p>}
       {actionError && <p className="error small">{actionError}</p>}
@@ -132,7 +135,7 @@ export default function GuestList({
         <div className="field-row">
           <input
             type="text"
-            placeholder="Guest name"
+            placeholder={t('Guest name')}
             value={formValues.name}
             onChange={(e) => setFormValues((prev) => ({ ...prev, name: e.target.value }))}
             disabled={!designId || submitting}
@@ -140,14 +143,14 @@ export default function GuestList({
           />
           <input
             type="text"
-            placeholder="Contact info (optional)"
+            placeholder={t('Contact info (optional)')}
             value={formValues.contact}
             onChange={(e) => setFormValues((prev) => ({ ...prev, contact: e.target.value }))}
             disabled={!designId || submitting}
           />
         </div>
         <textarea
-          placeholder="Comment (optional)"
+          placeholder={t('Comment (optional)')}
           value={formValues.comment}
           onChange={(e) => setFormValues((prev) => ({ ...prev, comment: e.target.value }))}
           disabled={!designId || submitting}
@@ -162,10 +165,10 @@ export default function GuestList({
             }
             disabled={!designId || submitting}
           />
-          Mark as confirmed
+          {t('Mark as confirmed')}
         </label>
         <button type="submit" className="primary" disabled={!designId || submitting}>
-          {submitting ? 'Adding...' : 'Add guest'}
+          {submitting ? t('Adding...') : t('Add guest')}
         </button>
       </form>
 
@@ -176,17 +179,17 @@ export default function GuestList({
           onClick={() => onRefresh && onRefresh()}
           disabled={!designId || loading}
         >
-          {loading ? 'Refreshing...' : 'Refresh guests'}
+          {loading ? t('Refreshing...') : t('Refresh guests')}
         </button>
         <span className="muted small">
-          {guestItems.length} {guestItems.length === 1 ? 'guest' : 'guests'}
+          {guestItems.length} {guestItems.length === 1 ? t('guest') : t('guests')}
         </span>
       </div>
 
       <ul className="guest-list">
-        {loading && <li className="muted">Loading guests...</li>}
+        {loading && <li className="muted">{t('Loading guests...')}</li>}
         {!loading && !guestItems.length && (
-          <li className="muted">No guests yet. Add your first invitee above.</li>
+          <li className="muted">{t('No guests yet. Add your first invitee above.')}</li>
         )}
         {guestItems.map((guest) => (
           <li key={guest.id} className={guest.is_confirmed ? 'confirmed' : ''}>
@@ -196,7 +199,7 @@ export default function GuestList({
                 {guest.contact && <span className="muted guest-contact">{guest.contact}</span>}
               </div>
               <span className={`badge ${guest.is_confirmed ? 'badge-success' : 'badge-muted'}`}>
-                {guest.is_confirmed ? 'Confirmed' : 'Pending'}
+                {guest.is_confirmed ? t('Confirmed') : t('Pending')}
               </span>
             </div>
 
@@ -215,38 +218,38 @@ export default function GuestList({
                     type="text"
                     value={editValues.contact}
                     onChange={(e) => setEditValues((prev) => ({ ...prev, contact: e.target.value }))}
-                    placeholder="Contact info"
+                    placeholder={t('Contact info')}
                   />
                 </div>
                 <textarea
                   rows={2}
                   value={editValues.comment}
                   onChange={(e) => setEditValues((prev) => ({ ...prev, comment: e.target.value }))}
-                  placeholder="Comment"
+                  placeholder={t('Comment')}
                 />
                 <div className="guest-edit-actions">
                   <button type="submit" className="primary" disabled={editSubmitting}>
-                    {editSubmitting ? 'Saving...' : 'Save'}
+                    {editSubmitting ? t('Saving...') : t('Save')}
                   </button>
                   <button type="button" className="ghost" onClick={cancelEdit} disabled={editSubmitting}>
-                    Cancel
+                    {t('Cancel')}
                   </button>
                 </div>
               </form>
             ) : (
               <div className="guest-item-actions">
                 <button type="button" className="ghost" onClick={() => toggleConfirmed(guest)}>
-                  {guest.is_confirmed ? 'Mark pending' : 'Mark confirmed'}
+                  {guest.is_confirmed ? t('Mark pending') : t('Mark confirmed')}
                 </button>
                 <button type="button" className="ghost" onClick={() => startEdit(guest)}>
-                  Edit details
+                  {t('Edit details')}
                 </button>
                 <button
                   type="button"
                   className="ghost danger"
                   onClick={() => handleDelete(guest)}
                 >
-                  Delete
+                  {t('Delete')}
                 </button>
               </div>
             )}

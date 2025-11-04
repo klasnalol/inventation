@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fabric } from 'fabric'
 import api from '../api'
-import 'gifler/gifler.min.js'
+import giflerLib from 'gifler'
 import GifPickerModal from './GifPickerModal'
+import { useI18n } from '../i18n'
 
 export const FABRIC_EXPORT_PROPS = [
   'selectable',
@@ -63,6 +64,11 @@ export default function CanvasEditor({
   defaultText = DEFAULT_TEXT,
   defaultTitleSuffix = 'My Invite',
   onCanvasReady,
+  sizeOptions = [],
+  sizeKey = null,
+  sizeDimensions = null,
+  onSizeChange,
+  allowSizeChange = false,
 }){
   const canvasRef = useRef(null)
   const [canvas, setCanvas] = useState(null)
@@ -74,6 +80,62 @@ export default function CanvasEditor({
   const [error, setError] = useState(null)
   const [showGifPicker, setShowGifPicker] = useState(false)
   const gifAnimationsRef = useRef(new Map())
+  const canvasContainerRef = useRef(null)
+  const baseSizeRef = useRef({
+    width: sizeDimensions?.width || template?.width || 1200,
+    height: sizeDimensions?.height || template?.height || 1800,
+  })
+  const resolvedSize = useMemo(() => {
+    const width = sizeDimensions?.width || template?.width || baseSizeRef.current.width || 1200
+    const height = sizeDimensions?.height || template?.height || baseSizeRef.current.height || 1800
+    return { width, height }
+  }, [sizeDimensions?.width, sizeDimensions?.height, template?.width, template?.height])
+  const { t } = useI18n()
+
+  const recomputeViewport = useCallback(() => {
+    if (!canvas || !isCanvasReady(canvas)) return
+    const { width: baseWidth = 1200, height: baseHeight = 1800 } = baseSizeRef.current
+    if (!baseWidth || !baseHeight) return
+    const host = canvasContainerRef.current
+    let availableWidth = baseWidth
+    if (host?.parentElement) {
+      const parent = host.parentElement
+      const computed = typeof window !== 'undefined' ? window.getComputedStyle(parent) : null
+      const paddingLeft = computed ? parseFloat(computed.paddingLeft || '0') : 0
+      const paddingRight = computed ? parseFloat(computed.paddingRight || '0') : 0
+      const horizontalPadding = paddingLeft + paddingRight
+      availableWidth = Math.max(parent.clientWidth - horizontalPadding, 240)
+    } else if (typeof window !== 'undefined') {
+      availableWidth = Math.max(window.innerWidth - 64, 240)
+    }
+    const zoom = Math.min(Math.max(availableWidth / baseWidth, 0.1), 1)
+    const displayWidth = Math.round(baseWidth * zoom)
+    const displayHeight = Math.round(baseHeight * zoom)
+
+    canvas.setDimensions({ width: baseWidth, height: baseHeight }, { backstoreOnly: true })
+    canvas.setDimensions({ width: displayWidth, height: displayHeight })
+    canvas.setViewportTransform([zoom, 0, 0, zoom, 0, 0])
+
+    if (canvas.lowerCanvasEl) {
+      canvas.lowerCanvasEl.style.width = `${displayWidth}px`
+      canvas.lowerCanvasEl.style.height = `${displayHeight}px`
+    }
+    if (canvas.upperCanvasEl) {
+      canvas.upperCanvasEl.style.width = `${displayWidth}px`
+      canvas.upperCanvasEl.style.height = `${displayHeight}px`
+    }
+    if (host) {
+      host.style.setProperty('--canvas-display-width', `${displayWidth}px`)
+      host.style.setProperty('--canvas-display-height', `${displayHeight}px`)
+      host.style.width = `${displayWidth}px`
+      host.style.height = `${displayHeight}px`
+      host.style.minWidth = `${displayWidth}px`
+      host.style.minHeight = `${displayHeight}px`
+    }
+
+    canvas.renderAll()
+    canvas.calcOffset()
+  }, [canvas])
 
   const ensureMetadata = useCallback((obj) => {
     if (!obj) return
@@ -84,9 +146,15 @@ export default function CanvasEditor({
       obj.set('layerType', obj.type === 'textbox' ? 'text' : 'image')
     }
     if (!obj.layerName) {
-      obj.set('layerName', obj.layerType === 'text' ? 'Text Layer' : 'Image Layer')
+      const defaultName =
+        obj.layerType === 'gif'
+          ? t('GIF Layer')
+          : obj.layerType === 'text' || obj.type === 'textbox'
+            ? t('Text Layer')
+            : t('Image Layer')
+      obj.set('layerName', defaultName)
     }
-  }, [])
+  }, [t])
 
   const stopGifAnimation = useCallback((layerId) => {
     if (!layerId) return
@@ -113,7 +181,14 @@ export default function CanvasEditor({
 
   const startGifAnimation = useCallback((target, source) => {
     if (!canvas || !target || !source || !isCanvasReady(canvas)) return
-    const giflerFn = typeof window !== 'undefined' ? window.gifler : null
+    const giflerFn =
+      typeof giflerLib === 'function'
+        ? giflerLib
+        : typeof giflerLib?.default === 'function'
+          ? giflerLib.default
+          : typeof window !== 'undefined'
+            ? window.gifler
+            : null
     if (typeof giflerFn !== 'function') {
       console.warn('GIF playback library not available')
       return
@@ -200,23 +275,61 @@ export default function CanvasEditor({
 
   useEffect(() => () => clearGifAnimations(), [clearGifAnimations])
 
+  useEffect(() => {
+    if (!canvas) return
+    recomputeViewport()
+  }, [canvas, recomputeViewport])
+
+  useEffect(() => {
+    if (!resolvedSize.width || !resolvedSize.height) return
+    baseSizeRef.current = {
+      width: resolvedSize.width,
+      height: resolvedSize.height,
+    }
+    recomputeViewport()
+  }, [resolvedSize.width, resolvedSize.height, recomputeViewport])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const handleResize = () => recomputeViewport()
+    window.addEventListener('resize', handleResize)
+    let observer
+    if (typeof ResizeObserver !== 'undefined' && canvasContainerRef.current) {
+      const target = canvasContainerRef.current.parentElement || canvasContainerRef.current
+      observer = new ResizeObserver(() => recomputeViewport())
+      observer.observe(target)
+    }
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      if (observer) observer.disconnect()
+    }
+  }, [recomputeViewport])
+
   const refreshLayers = useCallback(() => {
     if (!canvas) return
     const active = canvas.getActiveObject()
     const objects = canvas
       .getObjects()
       .filter((obj) => obj && obj !== canvas.backgroundImage)
-      .map((obj, index) => ({
-        id: obj.layerId,
-        name: obj.layerName || (obj.layerType === 'text' ? 'Text Layer' : 'Image Layer'),
-        type: obj.layerType || (obj.type === 'textbox' ? 'text' : obj.type),
-        visible: obj.visible !== false,
-        index,
-      }))
+      .map((obj, index) => {
+        const fallbackName =
+          obj.layerType === 'gif'
+            ? t('GIF Layer')
+            : obj.layerType === 'text' || obj.type === 'textbox'
+              ? t('Text Layer')
+              : t('Image Layer')
+        return {
+          id: obj.layerId,
+          name: obj.layerName || fallbackName,
+          type: obj.layerType || (obj.type === 'textbox' ? 'text' : obj.type),
+          visible: obj.visible !== false,
+          index,
+        }
+      })
       .reverse()
     setLayers(objects)
     setActiveLayer(active && active !== canvas.backgroundImage ? active.layerId : null)
-  }, [canvas])
+  }, [canvas, t])
 
   useEffect(() => {
     if (!canvas) return
@@ -257,8 +370,7 @@ export default function CanvasEditor({
 
   const addOverlayImageToCanvas = useCallback((img) => {
     if (!canvas || !img || !isCanvasReady(canvas)) return
-    const width = canvas.getWidth()
-    const height = canvas.getHeight()
+    const { width, height } = baseSizeRef.current
     if (width && height && img.width && img.height) {
       const maxWidth = width * 0.6
       const maxHeight = height * 0.6
@@ -284,8 +396,7 @@ export default function CanvasEditor({
       const targetCanvas = canvas
       const img = await loadFabricImage(source, options)
       if (!targetCanvas || targetCanvas !== canvas || !isCanvasReady(targetCanvas)) return null
-      const width = targetCanvas.getWidth()
-      const height = targetCanvas.getHeight()
+      const { width, height } = baseSizeRef.current
       if (width && height && img.width && img.height) {
         const scale = Math.max(width / img.width, height / img.height)
         img.scale(scale)
@@ -331,8 +442,14 @@ export default function CanvasEditor({
     const bootstrap = async () => {
       if (!canvas || !isCanvasReady(canvas)) return
       const instance = canvas
-      instance.setWidth(template.width)
-      instance.setHeight(template.height)
+      const baseWidth = resolvedSize.width || template.width || 1200
+      const baseHeight = resolvedSize.height || template.height || 1800
+      baseSizeRef.current = {
+        width: baseWidth,
+        height: baseHeight,
+      }
+      instance.setWidth(baseWidth)
+      instance.setHeight(baseHeight)
       try {
         await applyBackgroundFromSource(template.image_url, 'template', { crossOrigin: 'anonymous' })
       } catch (err) {
@@ -342,10 +459,13 @@ export default function CanvasEditor({
         }
         setHasCustomBackground(false)
       }
+      recomputeViewport()
       if (!isCanvasReady(instance)) return
       if (design?.fabric_json) {
         instance.loadFromJSON(design.fabric_json, () => {
           if (!isCanvasReady(instance)) return
+          instance.setWidth(baseWidth)
+          instance.setHeight(baseHeight)
           instance.renderAll()
           const color = instance.backgroundColor || DEFAULT_BG
           if (!instance.backgroundColor) {
@@ -371,23 +491,25 @@ export default function CanvasEditor({
             }
           })
           refreshLayers()
+          recomputeViewport()
         })
       } else {
-        const t = new fabric.Textbox(defaultText, {
-          left: template.width * 0.1,
-          top: template.height * 0.1,
-          width: template.width * 0.8,
-          fontSize: Math.round(template.width * 0.06),
+        const textbox = new fabric.Textbox(t(defaultText), {
+          left: baseWidth * 0.1,
+          top: baseHeight * 0.1,
+          width: baseWidth * 0.8,
+          fontSize: Math.round(baseWidth * 0.06),
           fill: '#111',
           textAlign: 'center',
           fontFamily: 'Georgia, serif',
         })
-        ensureMetadata(t)
+        ensureMetadata(textbox)
         if (!isCanvasReady(instance)) return
-        instance.add(t)
+        instance.add(textbox)
         instance.setBackgroundColor(DEFAULT_BG, instance.renderAll.bind(instance))
         setBackground(DEFAULT_BG)
         setHasCustomBackground(false)
+        recomputeViewport()
       }
     }
 
@@ -413,16 +535,16 @@ export default function CanvasEditor({
 
   function addText() {
     if (!canvas) return
-    const t = new fabric.Textbox('Double-click to edit', {
+    const text = new fabric.Textbox(t('Double-click to edit'), {
       left: 60,
       top: 60,
       width: 400,
       fontSize: 42,
       fill: '#222',
     })
-    ensureMetadata(t)
-    canvas.add(t)
-    canvas.setActiveObject(t)
+    ensureMetadata(text)
+    canvas.add(text)
+    canvas.setActiveObject(text)
     canvas.renderAll()
   }
 
@@ -448,12 +570,12 @@ export default function CanvasEditor({
         const needsAuth = err?.response?.status === 401
         setError(
           needsAuth
-            ? 'Login required to upload to the server. Used a local copy instead.'
-            : 'Upload failed - used a local copy instead.'
+            ? t('Login required to upload to the server. Used a local copy instead.')
+            : t('Upload failed - used a local copy instead.')
         )
       } catch (fallbackErr) {
         console.error(fallbackErr)
-        setError('Unable to load that image. Please try a different file.')
+        setError(t('Unable to load that image. Please try a different file.'))
       }
     } finally {
       setBusy(false)
@@ -481,12 +603,12 @@ export default function CanvasEditor({
         const needsAuth = err?.response?.status === 401
         setError(
           needsAuth
-            ? 'Login required to upload backgrounds. Using a local background instead.'
-            : 'Background upload failed - using a local background instead.'
+            ? t('Login required to upload backgrounds. Using a local background instead.')
+            : t('Background upload failed - using a local background instead.')
         )
       } catch (fallbackErr) {
         console.error(fallbackErr)
-        setError('Unable to load that background. Please try another image.')
+        setError(t('Unable to load that background. Please try another image.'))
       }
     } finally {
       setBusy(false)
@@ -530,7 +652,7 @@ export default function CanvasEditor({
         }
         img.set({
           layerType: 'gif',
-          layerName: 'GIF Layer',
+          layerName: t('GIF Layer'),
           gifSource: gif.url,
         })
         const added = addOverlayImageToCanvas(img)
@@ -545,7 +667,7 @@ export default function CanvasEditor({
         setShowGifPicker(false)
       } catch (err) {
         console.error(err)
-        setError('Unable to add that GIF. Please try another one.')
+        setError(t('Unable to add that GIF. Please try another one.'))
       } finally {
         setBusy(false)
       }
@@ -560,7 +682,7 @@ export default function CanvasEditor({
     applyBackgroundFromSource(template.image_url, 'template', { crossOrigin: 'anonymous' })
       .catch((err) => {
         console.error(err)
-        setError('Unable to restore the template background right now.')
+        setError(t('Unable to restore the template background right now.'))
       })
       .finally(() => setBusy(false))
   }
@@ -583,10 +705,21 @@ export default function CanvasEditor({
 
   async function save() {
     if (!canvas) return
+    const baseWidth = baseSizeRef.current.width || template?.width || 1200
+    const baseHeight = baseSizeRef.current.height || template?.height || 1800
+    const snapshot = canvas.toJSON(FABRIC_EXPORT_PROPS)
+    snapshot.width = baseWidth
+    snapshot.height = baseHeight
+    snapshot.meta = {
+      ...(snapshot.meta || {}),
+      baseWidth,
+      baseHeight,
+      sizeKey,
+    }
     const payload = {
-      title: design?.title || `${template.name} - ${defaultTitleSuffix}`,
-      template_id: template.id,
-      fabric_json: canvas.toJSON(FABRIC_EXPORT_PROPS),
+      title: design?.title || `${template?.name || 'Invitation'} - ${defaultTitleSuffix}`,
+      template_id: template?.id || design?.template_id,
+      fabric_json: snapshot,
     }
     await onSave(payload)
   }
@@ -636,49 +769,64 @@ export default function CanvasEditor({
     <div className="canvas-editor">
       <div className="toolbar">
         <div className="toolbar-group">
-          <button className="ghost" onClick={addText}>Add Text</button>
+          {allowSizeChange && sizeOptions.length > 0 && (
+            <label className="ghost size-picker">
+              <span>{t('Canvas size')}</span>
+              <select
+                value={sizeKey || sizeOptions[0]?.id || 'template'}
+                onChange={(e) => onSizeChange?.(e.target.value)}
+              >
+                {sizeOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id} disabled={opt.disabled}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button className="ghost" onClick={addText}>{t('Add Text')}</button>
           <label className={`ghost file-input ${busy ? 'disabled' : ''}`}>
-            <span>Add Photo</span>
+            <span>{t('Add Photo')}</span>
             <input type="file" accept="image/*" onChange={uploadImage} disabled={busy} />
           </label>
           <button className="ghost" type="button" onClick={() => setShowGifPicker(true)} disabled={busy}>
-            Add GIF
+            {t('Add GIF')}
           </button>
           <label className={`ghost file-input ${busy ? 'disabled' : ''}`}>
-            <span>Background Photo</span>
+            <span>{t('Background Photo')}</span>
             <input type="file" accept="image/*" onChange={uploadBackgroundImage} disabled={busy} />
           </label>
           <label className="ghost background-picker">
-            <span>Background</span>
+            <span>{t('Background')}</span>
             <input type="color" value={background} onChange={handleBackgroundChange} />
           </label>
           {hasCustomBackground && (
             <button className="ghost" type="button" onClick={resetBackgroundImage} disabled={busy}>
-              Reset Background
+              {t('Reset Background')}
             </button>
           )}
         </div>
         <div className="toolbar-actions">
-          <button className="ghost" onClick={exportPNG}>Export PNG</button>
-          <button className="primary" onClick={save}>Save</button>
+          <button className="ghost" onClick={exportPNG}>{t('Export PNG')}</button>
+          <button className="primary" onClick={save}>{t('Save')}</button>
         </div>
       </div>
       {error && <p className="error upload-error">{error}</p>}
       <div className="canvas-workspace">
-        <div className="canvas-frame">
+        <div className="canvas-frame" ref={canvasContainerRef}>
           <canvas ref={canvasRef} />
         </div>
         <aside className="layer-panel">
           <div className="layer-panel-header">
-            <h4>Layers</h4>
-            <p className="muted">Reorder, hide, or remove items.</p>
+            <h4>{t('Layers')}</h4>
+            <p className="muted">{t('Reorder, hide, or remove items.')}</p>
           </div>
           <ul className="layer-list">
             {layers.map((layer) => (
               <li key={layer.id} className={layer.id === activeLayer ? 'active' : ''}>
                 <button className="layer-select" onClick={() => selectLayer(layer.id)}>
                   <span className="layer-type">
-                    {layer.type === 'text' ? 'Text' : layer.type === 'gif' ? 'GIF' : 'Image'}
+                    {layer.type === 'text' ? t('Text') : layer.type === 'gif' ? t('GIF') : t('Image')}
                   </span>
                   <input
                     value={layer.name}
@@ -687,16 +835,16 @@ export default function CanvasEditor({
                   />
                 </button>
                 <div className="layer-controls">
-                  <button onClick={() => moveLayer(layer.id, 'up')} title="Bring forward">Up</button>
-                  <button onClick={() => moveLayer(layer.id, 'down')} title="Send backward">Down</button>
-                  <button onClick={() => toggleLayer(layer.id)} title="Toggle visibility">
-                    {layer.visible ? 'Hide' : 'Show'}
+                  <button onClick={() => moveLayer(layer.id, 'up')} title={t('Bring forward')}>{t('Up')}</button>
+                  <button onClick={() => moveLayer(layer.id, 'down')} title={t('Send backward')}>{t('Down')}</button>
+                  <button onClick={() => toggleLayer(layer.id)} title={t('Toggle visibility')}>
+                    {layer.visible ? t('Hide') : t('Show')}
                   </button>
-                  <button onClick={() => deleteLayer(layer.id)} title="Delete">Delete</button>
+                  <button onClick={() => deleteLayer(layer.id)} title={t('Delete')}>{t('Delete')}</button>
                 </div>
               </li>
             ))}
-            {!layers.length && <li className="empty muted">Add text or images to manage layers.</li>}
+            {!layers.length && <li className="empty muted">{t('Add text or images to manage layers.')}</li>}
           </ul>
         </aside>
       </div>

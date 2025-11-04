@@ -21,6 +21,7 @@ class Template(Base):
     image_url: Mapped[str] = mapped_column(String(500))
     width: Mapped[int] = mapped_column(Integer, default=1200)
     height: Mapped[int] = mapped_column(Integer, default=1800)
+    category: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
 class Design(Base):
     __tablename__ = "designs"
