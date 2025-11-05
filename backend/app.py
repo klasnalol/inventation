@@ -98,26 +98,26 @@ def seed_templates():
         {
             "name": "Kazakh Sky",
             "category": "Kazakh Heritage",
-            "thumbnail_url": "/static/templates/kazakh-sky-thumb.png",
-            "image_url": "/static/templates/kazakh-sky.png",
-            "width": 1200,
-            "height": 1800,
+            "thumbnail_url": "/static/templates/kazakhstan-flag-thumb.png",
+            "image_url": "/static/templates/kazakhstan-flag-1024.png",
+            "width": 1024,
+            "height": 512,
         },
         {
             "name": "Yurt Evening",
             "category": "Kazakh Heritage",
-            "thumbnail_url": "/static/templates/yurt-evening-thumb.png",
-            "image_url": "/static/templates/yurt-evening.png",
-            "width": 1200,
-            "height": 1800,
+            "thumbnail_url": "/static/templates/kazakh-ornaments-thumb.jpg",
+            "image_url": "/static/templates/kazakh-ornaments-1024.jpg",
+            "width": 1024,
+            "height": 768,
         },
         {
             "name": "Steppe Sunrise",
             "category": "Kazakh Heritage",
-            "thumbnail_url": "/static/templates/steppe-sunrise-thumb.png",
-            "image_url": "/static/templates/steppe-sunrise.png",
-            "width": 1200,
-            "height": 1800,
+            "thumbnail_url": "/static/templates/kazakh-jewelry-thumb.jpg",
+            "image_url": "/static/templates/kazakh-jewelry-1024.jpg",
+            "width": 1024,
+            "height": 768,
         },
     ]
     with Session(engine) as s:
@@ -559,7 +559,7 @@ def get_rsvp_info(design_id: int):
 
 @app.get('/')
 def root():
-    return jsonify({"ok": True, "service": "Invitation Maker API"})
+    return jsonify({"ok": True, "service": "Qonaq Invite API"})
 
 if __name__ == '__main__':
     app.run(debug=True)

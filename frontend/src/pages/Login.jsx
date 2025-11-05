@@ -29,7 +29,7 @@ export default function Login({ onAuth }){
         <p className="card-subtitle">
           {mode === 'login'
             ? 'Sign in to access your saved designs and keep editing.'
-            : 'Join Invent to save your invites and collaborate anywhere.'}
+            : 'Join Qonaq Invite to save your invites and collaborate anywhere.'}
         </p>
         <label>
           <span>Email</span>

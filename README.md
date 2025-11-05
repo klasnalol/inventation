@@ -1,4 +1,4 @@
-# Invitation Maker — React + Flask (Split Frontend/Backend)
+# Qonaq Invite — React + Flask (Split Frontend/Backend)
 
 This is a minimal invitation‑maker with login, premade templates, a canvas editor (Fabric.js), PNG export, and DB saves.
 

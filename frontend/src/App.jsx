@@ -37,7 +37,7 @@ export default function App(){
     <div className="app-shell">
       <header className="app-header">
         <div className="app-header-inner">
-          <Link className="brand" to="/">{t('Invent Invitations')}</Link>
+          <Link className="brand" to="/">{t('Qonaq Invite')}</Link>
           <nav className="nav-links">
             <NavLink to="/" end className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
               {t('Templates')}
